@@ -3,7 +3,9 @@ A series of 4 RMarkdown reports aimed at demonstrating the value of data and ana
 
 This repository contains:
  
-1. RMarkdown report that Identify managerially relevant subgroups in a customer database.
+1. Customer Analytics I - Market Segmentation 
+
+RMarkdown report that demonstrates implementation of a clustering method to identify managerially relevant subgroups in a customer database. 
 
 2. Build a model that predicts customer churn.
 

@@ -1,0 +1,466 @@
+---
+title: "Customer Analytics I - Market Segmentation"
+author: "Karl Melo"
+date: "2016"
+output: 
+ html_document: 
+    fig_height: 6
+    highlight: pygments
+    theme: cerulean
+    toc: true
+    toc_float: true
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+   font-size: 16px;
+}
+td {  /* Table  */
+   font-size: 12px;
+}
+h1 { /* Header 1 */
+ font-size: 28px;
+ color: SteelBlue;
+}
+h2 { /* Header 2 */
+ font-size: 22px;
+ color: SteelBlue;
+}
+h3 { /* Header 3 */
+ font-size: 18px;
+ color: SteelBlue;
+}
+code.r{ /* Code block */
+  font-size: 14px;
+}
+pre { /* Code block */
+  font-size: 12px
+}
+</style>
+
+## 1. Introduction
+
+This is the first of a series of 4 reports written to demonstrate the value of customer analytics to the senior management of a diversified holding company with subsidiaries in key emerging markets. The papers aim to support the argument for significant investments in data and analytics capabilities as a means of driving revenue and profit growth through improved customer relationship management.
+
+These reports are meant for analytics practitioners.  Analyses are with the R statistical programming language.
+
+The key insights and recommendations are presented in a separate powerpoint deck prepared for non-technical executives.
+
+The papers implement advanced analytics methods that attempt to: 
+
+**1. Identify managerially relevant subgroups in a customer database.**
+
+**2. Build a model that predicts customer churn.**
+
+**3. Build a model that predicts the spending level of customers predicted to remain loyal.**
+
+**4. Estimate the lifetime value of each customer.**
+
+Analyses are performed on a very narrow dataset. Although this will likely restrict the performance of the predictive models, the dataset is representative of the limited data currently available within most of our subsidiaries.
+
+***
+
+## 2. Objective
+
+This report focuses on the first task - identifying valid subgroups (clusters) within customer data
+
+From a managerial point of view clusters must be charactierized by sufficient within-group similarity and between group dissimilarity to justify distinct treatment.
+
+** Performance target**
+
+This is an unsupervised learning task.  The objective is not to predict a given outcome but to discover useful patterns in the data.
+
+It is therefore impossible to set a specific performance target in this context. Save perhaps to ensure that identified clusters are indeed valid i.e non-random.
+
+***
+
+## 3. Set Up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = 'center')
+```
+
+### 3.1 Load Packages
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(pastecs)
+library(fpc)
+```
+
+### 3.2 Load Data
+
+```{r load data}
+cust_data = read.delim(file = 'transactions.txt', header = FALSE, sep = '\t', dec = '.')
+```
+
+***
+
+## 4. Dataset Description
+
+The dataset is proprietary customer data consisting of 51,243 observations across 3 variables:
+
+* customer i.d
+* purchase amount in USD
+* transaction date
+
+The data covers the period January 2nd 2005 to December 31st 2015.
+
+The dataset is tidy and ready for analysis.
+
+## 5. Data preparation
+
+Perform various data wrangling actions and create additional variables (key marketing indicators):
+
+`recency` - time since last purchase (days)
+
+`frequency` - number of purchase transactions
+
+`avg_amount` - average amount spent
+
+```{r cache=TRUE}
+## Name original columns
+cust_data <- rename(cust_data, 
+                     customer_id = V1, purchase_amount = V2, date_of_purchase = V3)
+
+## Convert purchase date to R date object
+cust_data$date_of_purchase <- as.Date(cust_data$date_of_purchase, "%Y-%m-%d")
+
+## Create recency variable
+cust_data$days_since <- as.numeric(difftime(time1 = "2016-01-01",
+                                            time2 = cust_data$date_of_purchase,
+                                            units = "days"))   
+
+## Create analysis dataset including 'frequency' variable
+customers <- cust_data %>%
+                group_by(customer_id) %>%
+                summarise(recency = min(days_since), 
+                          frequency = n(), 
+                          avg_amount = mean(purchase_amount))
+
+```
+
+***
+
+## 6. Data Exploration
+
+### 6.1 Descriptive statistics
+```{r}
+options(digits = 2, scipen = 99)
+stat.desc(select(customers, -customer_id))
+```
+
+Data structure
+```{r}
+str(customers)
+```
+
+### 6.2 Distributions
+
+`frequency`
+
+The distribution is severely right skewed. Most customers have made between 1 and 15 purchases.  A few outliers can be found beyond this point up to the extreme of 45
+```{r}
+
+ggplot(customers, aes(x = frequency)) +
+   geom_histogram(bins = 20, fill = "steelblue") +
+   theme_classic() +
+   labs(x = "frequency", title = "Purchase frequency") +
+   scale_x_continuous(breaks = c(0, 5, 10, 15, 25, 35, 45))
+```
+
+Almost 50% of customers have only ever made 1 purchase
+```{r}
+dim(filter(customers, frequency == 1))[1]/dim(customers)[1]
+```
+
+`recency`
+
+Apart from a spike on the extreme left, the distribution is fairly uniform.  
+```{r}
+ggplot(customers, aes(x = recency)) +
+   geom_histogram(fill = "steelblue") +
+   theme_classic() +
+   labs(x = "recency", title = "Recency in Days") +
+  scale_x_continuous(breaks = c(0, 250, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000))
+```
+
+Just below 30% of customers have been active in the last year.
+```{r}
+dim(filter(customers, recency < 365))[1]/dim(customers)[1]
+```
+
+`amount`
+
+The series has mean 58 with 50% of samples between 22 and 50. The mean is pulled above the median by the severe right skew caused by some extreme outliers. The distribution stretches to 4,500. 
+```{r}
+summary(customers$avg_amount)
+
+```
+
+
+```{r fig.show = 'hold', out.width = '50%'}
+
+ggplot(customers, aes(x = avg_amount)) +
+   geom_histogram(bins = 20, fill = "steelblue") +
+   theme_classic() +
+   labs(x = "average amount", title = "Average purchase amount")
+
+ggplot(customers, aes(x = avg_amount)) +
+   geom_histogram(bins = 20, fill = "steelblue") +
+   theme_classic() +
+   labs(x = "amount (log10)", title = "Log transformed average purchase amount") +
+   scale_x_log10()
+```
+
+
+***
+
+## 7. Statistical Segmentation
+
+### 7.1 Data preparation for modelling
+```{r}
+
+## Remove customer_id column and set as row names
+row.names(customers) <- customers$customer_id
+customers <- select(customers, -customer_id)
+
+## Scale data to balance the influence of variables measured on different scales and/or with vastly different ## variances
+clust_data <- scale(customers)
+```
+
+### 7.2 Clustering Method
+
+Several methods for finding sub-groups in data are available. I will implement the hierarchical clustering method that partitions data by creating a cluster tree (dendrogram).  Each leaf of the tree (terminal node) represents an observation. The algorithm progressively merges the observation into ever larger clusters (upward branching).  See the dendrograms below
+
+The hierarchical clustering algorithm requires the analyst to make a number of crucial decisions.
+
+* **Dissimilarity Measure** - I use Euclidean distance for this analysis because I believe it is best suited for the task of partitioning rows of observations into sub-groups across diverse variables. 
+
+* **Linkage** - As the algorithm moves above the bottom level of the dendrogram and is required to fuse clusters - no longer individual samples - a different dissimilarity measure is required. Linkage defines such measures.  There are no hard rules guiding their selection. I shall try 3 different linkage measures.
+
+* **Dendrogram height of fusion** - The tree builds up from individual samples up to a single cluster representing the entire dataset.  It must therefore be cut at a given point to obtain the desired number of clusters.  A number of methods have been developed to find the optimal number of clusters in a dataset.  They are complex and computationally expensive.  A simple and often useful alternative is to simply observe the tree and make a judgement.
+
+I can imagine scenarios where the decision is influenced by the business context. Inexpensive marketing messages could be customized for a large number of clusters. New products with high development costs may only be developed to target a limited number of sub-groups.
+
+
+Implement hierarchical clustering with 3 linkage types using Euclidean distance.
+```{r cache=TRUE}
+
+set.seed(11)
+hc.complete =hclust (dist(clust_data), method = "complete")
+hc.average =hclust (dist(clust_data), method = "average")
+hc.ward =hclust (dist(clust_data), method = "ward.D2")
+```
+
+### 7.3 Dendrograms
+
+```{r cache = TRUE}
+
+plot(hc.complete, main = "Complete Linkage", xlab = "", sub = "", cex = .9)
+
+```
+
+```{r cache = TRUE}
+
+plot(hc.average, main = "Average Linkage", xlab = "", sub = "", cex = .9)
+
+```
+
+```{r cache = TRUE}
+
+plot(hc.ward, main = "Ward.D2 Linkage", xlab = "", sub = "", cex = .9)
+
+```
+
+The Ward.D2 linkage provides the most balanced dendrogram and will be used to obtain the clusters.
+
+Cut the dendrogram to produce 5 clusters. This choice is partly based on cluster validity evaluation by R packages {NbClust} and {clValid}.  The tests are unfortunately not reproducible here due to memory constraints.
+```{r}
+
+plot(hc.ward, main = "Ward.D2 agglomeration method", xlab = "", sub = "", cex = .9)
+abline(h = 82, col = "red")
+
+```
+
+```{r}
+
+clusters <- cutree(hc.ward, 5)
+table(clusters)
+```
+
+
+Assign customers to segments
+```{r}
+
+customers$segment <- clusters
+
+```
+
+### 7.4 Segment Centroids
+
+We see the average recency, frequency and amount spent for each segment. Customers in the 5th segment spend $2,300 per purchase whilst those in the 1st spend only 35 on average and are the least active.  Indeed many seem to have lapsed completely.  None have made any purchases in the last year. It should be noted that there are only 54 customers in the 5th segment and 5,890 in the 1st.
+
+Members of the 3rd segment are the most frequent shoppers and have also been the most active during the last year. 
+
+The remaining 2 segments can be similarly analyzed.
+```{r}
+
+profiles <- customers %>% 
+  group_by(segment) %>%
+  summarise_each(funs(mean))
+
+segment_counts <- customers %>% 
+  group_by(segment) %>% 
+  summarise(counts = n())
+
+profiles <- mutate(profiles, counts = segment_counts$counts) 
+profiles
+
+```
+
+It is possible to gain deeper insights into the segments through more detailed analyses with R packages such as {factomineR}.
+
+## 8. Cluster Visualizations
+
+### 8.1 Pairwise
+
+`frequency` against `avg_amount` with `segment` as the grouping variable.
+
+```{r}
+customers$segment <- as.factor(customers$segment)
+```
+
+
+```{r fig.width = 10}
+
+ggplot(data = customers,
+       aes(x = frequency, y = avg_amount, colour = segment, shape = segment)) +
+  geom_point() +
+  theme_dark() +
+  labs(title = "avg_amount vs frequency", shape = "segment", colour = "segment")
+```
+Distinct clusters are apparent in the data. Overlaps do occur. Notably between the 1st and 4th clusters. Neverthless, the justification for keeping both sub-groups separate is apparent when examining `avg_amount` by `recency` chart below.
+
+***
+
+`avg_amount` against `recency` with `segment` as the grouping variable.
+
+```{r fig.width = 10}
+ggplot(data = customers,
+       aes(x = recency, y = avg_amount, 
+                         colour = segment, shape = segment)) +
+  geom_point() +
+  theme_dark() +
+  labs(title = "amount vs recency",  shape = "segment", colour = "segment")
+```
+
+The clusters are well separated along these 2 dimensions with some overlap between segments 2 and 4.
+
+### 8.2 First 2 Principal Components
+
+
+The first 2 principal components describe a plane in $N$-data dimensions that captures as much information about the feature space as is possible to capture in 2 dimensions.
+
+This is a more faithful 2 dimensional visualization of the clusters than the plots above that only show pairwise combinations of the data.
+
+```{r}
+## Project clusters onto the first 2 principal components
+
+prin_comp <- princomp(clust_data)
+nComp <- 2
+project <- predict(prin_comp, newdata=clust_data)[,1:nComp]
+```
+
+
+```{r}
+## Create dataframe with transformed data
+
+project_data <- cbind(as.data.frame(project),
+                      cluster = as.factor(clusters))
+```
+
+
+```{r}
+
+ggplot(project_data, aes(x=Comp.1, y=Comp.2)) +
+   geom_point(aes(shape=cluster, colour = cluster)) +
+   theme_dark() +
+   labs(x = "PC 1", y = "PC 2", title = "first 2 principal components")
+```
+Segment 5 clearly separates itself out and shows significant variability. The 3rd segment shows similar variability in a different direction.
+
+Segments 1 to 4 overlap with each other with the 2nd segment significantly overlapping with the 3rd and 4th; perhaps a clue as to its stability.
+
+***
+
+The visualizations offer interesting initial insights into patterns in the data.  The overlaps between segments - significant in some cases - should be a cause for some concern. 
+
+It is worth trying to establish the reliability of the clusters.  Are they 'real' - in the sense that they capture non-random structure in the data?
+
+## 9. Cluster evaluation
+
+The clusterboot algorithm attempts to answer this question by evaluating the robustness of each cluster to perturbations in the data.  The cluster's stability is evaluated by measuring the similarity between sets of a 100 bootstrap samples.
+
+```{r cache=TRUE, results = 'hide'}
+
+clust_no <- 5
+
+set.seed(12)
+cboot_hclust <- clusterboot(clust_data, 
+                            clustermethod = hclustCBI,
+                            method = "ward.D2", 
+                            k = clust_no)
+```
+
+```{r}
+bootMean_data <- data.frame(cluster = 1:5, bootMeans = cboot_hclust$bootmean) 
+```
+
+**Visualize evaluation results**
+
+A rule of thumb for interpreting stability values suggest that clusters scored below 0.6 should be considered unstable.  Those between 0.6 and 0.75 are measuring patterns to a reasonable degree.  Scores above 0.8 indicate highly stable clusters.
+```{r}
+
+ggplot(data = bootMean_data, aes(x = cluster, y = bootMeans)) +
+  geom_point(aes(colour = "darkred", size = 1)) +
+  geom_hline(yintercept = c(0.6, 0.8)) +
+  labs(y = "stability", title = "Stability evaluation") +
+  theme(legend.position="none")
+```
+
+By those rules:
+
+* segment 1 is highly stable 
+
+* segments 4 and 5 are reasonably so
+
+* 3 is borderline and
+
+* segment 2 is highly unstable.  It is likely made up of unusual cases that do not comfortably fit anywhere else.
+
+## 10. Critique of Statistical Clustering Methods
+
+There are a number of important limitations with the deployment of statistical clustering methods in industrial environments.
+
+1. The method captures patterns in a dataset at a specific moment in time. This poses some challenges:
+
+ + customers continuously enter and leave the database. New customers may have different characteristics from old ones 
+ 
+ + customer behaviour may evolve over time
+ 
+2. A particular cluster scheme may capture seasonal effects thus making it inaplicable at different periods of time.
+
+3. All of this requires that the algorithm be very frequently updated. However, most clustering algorithms cannot be fully automated and require the supervion of an analyst, a significant handicap in industrial settings.
+
+4. Most clustering methods are not very robust to disturbances to the data. The cluster evaluation in section 9 illustrates this.
+
+## 11. Conclusion
+
+Statistical segmentation, nevertheless, remains a powerful and useful approach to finding subgroups in customer databases.  For one thing these methods identify natural patterns in multivariate datasets, unlike most commonly used non-statistical alternatives that rely heavily on judgement. The latter approaches can be severely impaired by various types of bias, personal agendas and cognitive limitations in processing complex data.
+
+In practical terms the approach demonstrated here can be used to obtain a faithful description of customer subgroups at a particular point in time and could serve to formulate hypotheses, guide further investigations and generally inform non-statistical managerial segmentation solutions.
+
+
